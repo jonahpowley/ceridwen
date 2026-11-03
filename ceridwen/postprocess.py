@@ -92,7 +92,8 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-__all__ = ["PostProcess", "SpectrumSample", "load_postprocess"]
+__all__ = ["PostProcess", "SpectrumSample", "load_postprocess",
+           "absolute_magnitudes", "colours"]
 
 _LSUN_ERG_S = 3.839e33
 _HPLANCK_ERG_S = 6.6261e-27
@@ -219,6 +220,31 @@ def mfrac_attrs(csp) -> dict:
             "grid_chash": str(getattr(csp, "grid_chash", None)),
             "sfh_interp": str(getattr(csp, "sfh_interp", None)),
             "units": "M_surviving / M_formed (stars + remnants), dimensionless"}
+
+
+def absolute_magnitudes(s: SpectrumSample, filters, *, spectrum: str = "full") -> np.ndarray:
+    """Rest-frame absolute AB magnitudes through CERIDWEN filters."""
+    from .observation.filters import Filter, FilterSet
+
+    if spectrum not in ("full", "intrinsic", "dustfree"):
+        raise ValueError("spectrum must be 'full', 'intrinsic', or 'dustfree'")
+    wave = np.asarray(s.wave_rest, dtype=float)
+    lnu = np.asarray(getattr(s, spectrum), dtype=float)
+    fnu = lnu * _LSUN_ERG_S / (4.0 * np.pi * (10.0 * _PC_CM) ** 2)
+    flam = fnu * Filter.lightspeed / wave ** 2
+
+    if isinstance(filters, FilterSet):
+        maggies = np.asarray(filters.get_sed_maggies(flam, sourcewave=wave), dtype=float).reshape(-1)
+        with np.errstate(divide="ignore"):
+            return -2.5 * np.log10(maggies)
+    native = [filters] if isinstance(filters, Filter) else list(filters)
+    return np.array([f.ab_mag(wave, flam) for f in native], dtype=float)
+
+
+def colours(s: SpectrumSample, filters, colour_pairs, *, spectrum: str = "full") -> np.ndarray:
+    """Rest-frame colour indices, ``m[i] - m[j]`` for ordered ``(i, j)`` pairs."""
+    magnitudes = absolute_magnitudes(s, filters, spectrum=spectrum)
+    return np.array([magnitudes[i] - magnitudes[j] for i, j in colour_pairs], dtype=float)
 
 
 class PostProcess:
